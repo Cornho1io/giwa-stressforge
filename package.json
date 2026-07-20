@@ -1,0 +1,33 @@
+{
+  "name": "giwa-stressforge",
+  "version": "1.0.0",
+  "description": "High-performance benchmarking and load-testing framework for GIWA Chain",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "stress:p2p": "ts-node src/index.ts --mode p2p",
+    "stress:contract": "ts-node src/index.ts --mode contract"
+  },
+  "keywords": [
+    "giwa",
+    "upbit",
+    "op-stack",
+    "stress-test",
+    "benchmark",
+    "viem",
+    "flashblocks"
+  ],
+  "author": "Artem",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

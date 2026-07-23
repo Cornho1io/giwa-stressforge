@@ -1,34 +1,42 @@
 # GIWA StressForge ⚒️
 
 ### One-Sentence Project Summary
-An open-source, high-performance Node.js benchmarking framework designed to stress-test GIWA Chain's 1-second block time, Flashblocks pre-confirmations, and network throughput under high-concurrency synthetic load.
+An open-source, high-performance Node.js benchmarking framework designed to stress-test GIWA Chain's 1-second block time, Flashblocks pre-confirmations, and RPC infrastructure under high-concurrency synthetic load.
 
 ---
 
-## 📢 Project Status: Active MVP Architecture
-> **Note for GASOK Reviewers:** The core architecture, dynamic network detection, async batching, and latency benchmarking pipelines are fully functional. The tool natively measures inclusion latencies and exports structured performance analytics for node operators and Web3 developers.
+## 📢 Project Status: Production-Ready CLI Engine
+> **Note for GASOK Reviewers:** The framework features an interactive CLI profile selector, wallet balance awareness, automated EVM benchmark contract deployments, parallel RPC read-spam modules, rate-limit backoff resilience, and automated dual-export reporting (JSON + Interactive HTML Dashboard).
 
 ---
 
-## 💡 The Challenge & Solution
+## 💡 Key Features & Architecture
 
-### The Challenge
-GIWA Chain delivers an ultra-fast **1-second block time** and utilizes **Flashblocks** for near-instant, sub-second pre-confirmations. However, during high-concurrency ecosystem events (like genesis NFT mints or rapid DEX pool deployments), underlying RPC endpoints and local execution nodes (`giwa-io/node`) face heavy throughput strain. Developers lack a lightweight, native developer tool to stress-test and benchmark their infrastructures before transitioning to production.
+* 💳 **Balance-Aware Pre-Flight Engine:** Automatically queries wallet ETH balance before profile selection and provides real-time gas fee estimates to prevent execution stalls.
+* 📌 **Interactive Benchmark Profiles:** Includes pre-configured test suites (`LIGHT`, `FULL`, `MAX`) as well as a fully configurable `CUSTOM` mode.
+* ⚡ **EVM & Native Transfer Load:** Deploys a lightweight benchmark contract (`Counter.sol`) and measures execution latencies across both EVM state mutations (`inc()`) and P2P transfers.
+* ⚡ **Parallel RPC Read Spam:** Simulates concurrent heavy read queries (e.g., balance polling) alongside transactional stress to test RPC throughput limits.
+* 🛡️ **Fault Tolerant & Resilient:** Equipped with dynamic EIP-1559 priority fee scaling, automated retry loops with exponential backoff for HTTP 429 rate limits, and non-crashing error boundary management.
+* 📊 **Dual Report Exporter:** Automatically compiles execution metrics into both structured `.json` data files and visually rich `.html` dashboards with latency graphs.
 
-### The Solution: GIWA StressForge
-`GIWA StressForge` is a lightweight, zero-overhead benchmarking framework engineered natively in TypeScript/Node.js to push GIWA's architecture to its limits.
+---
 
-* ⚡ **Dynamic Network Auto-Discovery:** Automatically queries target RPCs for Chain ID verification to eliminate network transaction mismatches.
-* 🔄 **Asynchronous Parallel Batch Engine:** Utilizes atomic nonce sequencing to broadcast concurrent transaction batches in parallel without mempool collisions.
-* ⏱️ **E2E Inclusion Latency Tracking:** Measures exact millisecond metrics across broadcast RPC delays, block inclusion speeds, and gas execution overhead.
-* 📊 **Automated Report Generation:** Automatically records benchmark performance runs into structured JSON reports for historical tracking and analysis.
+## ⚙️ Benchmark Profiles
+
+| Profile | Batch Size | EVM Contract Calls | Parallel Read Spam | Est. Balance Req. | Description |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **LIGHT** | 10 Txs | ❌ No | ❌ No | ~0.0008 ETH | Quick self-transfer latency check (Default) |
+| **FULL** | 25 Txs | ✅ Yes | ❌ No | ~0.0020 ETH | Mixed EVM contract calls & P2P transactions |
+| **MAX** | 50 Txs | ✅ Yes | ✅ Yes | ~0.0040 ETH | High priority fee, EVM calls + RPC read stress |
+| **CUSTOM** | User-defined | Configurable | Configurable | Dynamic | Manual control over tx count, fees, and EVM |
 
 ---
 
 ## 🛠️ Technical Stack
-* **Runtime Backend:** Node.js / TypeScript (Optimized for asynchronous event-loop handling and high-throughput network requests).
-* **Web3 Integration:** Powered by `viem` to mirror GIWA's ecosystem tool requirements and ensure accurate L2 gas estimations.
-* **Environment Configuration:** Managed via `dotenv` with full CLI argument overrides.
+* **Runtime:** Node.js / TypeScript (ES2022 / CommonJS).
+* **Ecosystem SDK:** Powered by `viem` for lightweight, precise EIP-1559 transaction construction and ABI encoding.
+* **Environment Management:** `dotenv` configuration with strict private key protection.
+* **Reporting:** Native HTML/CSS templating engine and filesystem JSON logger.
 
 ---
 
@@ -36,84 +44,61 @@ GIWA Chain delivers an ultra-fast **1-second block time** and utilizes **Flashbl
 
 ### 1. Installation
 Clone the repository and install dependencies:
-```bash
+
 git clone https://github.com/your-username/giwa-stressforge.git
 cd giwa-stressforge
 npm install
-```
 
 ### 2. Environment Setup
 Create a `.env` file in the root directory:
-```env
-GIWA_RPC_URL=https://sepolia-rpc.giwa.io
+
+RPC_URL=https://sepolia-rpc.giwa.io
 PRIVATE_KEY=0x_your_private_key_here
-```
 
-### 3. Execution Options
+### 3. Execution
+Launch the interactive CLI benchmark tool:
 
-Run default pipeline (Single Tx + 5-Tx Parallel Batch):
-```bash
 npm run dev
-```
 
-Run custom batch size directly:
-```bash
-npm run dev 10
-```
+Upon launching, the interactive menu will display your current balance and prompt for a profile selection:
 
-Run using CLI flags:
-```bash
-npm run dev -- --batch 20
-```
+============================================================
+💳 Wallet Balance : 0.0520 ETH
+============================================================
+📌 Select Benchmark Profile:
+ 1) LIGHT  | 10 Txs | Native Self-Transfers            | ~0.0008 ETH [DEFAULT]
+ 2) FULL   | 25 Txs | EVM Contract + Transfers         | ~0.0020 ETH
+ 3) MAX    | 50 Txs | EVM + Transfers + Read RPC Spam  | ~0.0040 ETH
+ 4) CUSTOM | Manual Configuration (Set your own parameters)
+------------------------------------------------------------
+
+Enter choice (1-4) [default: 1]:
 
 ---
 
 ## 📊 Exported Benchmark Reports
 
-Upon successful pipeline execution, `GIWA StressForge` automatically saves execution metrics to `./reports/benchmark-report-<timestamp>.json`.
+Reports are automatically generated and saved in the `./reports/` directory upon test completion.
 
-**Sample JSON Output:**
-```json
-{
-  "timestamp": "2026-07-21T06:47:28.062Z",
-  "network": {
-    "chainId": 91342,
-    "rpcUrl": "https://sepolia-rpc.giwa.io",
-    "activeWallet": "0x6A72C706Db1B49727e8Ece33AD8d8A9BF1d3774e"
-  },
-  "singleTxBenchmark": {
-    "txHash": "0xecab0f8b216f4aa59aa40d9f06ef06e4a79e3ec08d3d783bae641dccb8c595b7",
-    "blockNumber": "31271327",
-    "rpcBroadcastMs": 1914.17,
-    "blockInclusionMs": 1789.75,
-    "totalE2EMs": 3703.92,
-    "gasUsed": "21000"
-  },
-  "batchBenchmark": {
-    "batchSize": 5,
-    "minedCount": 5,
-    "successRatePercentage": 100,
-    "totalBatchDurationMs": 3742.86,
-    "averageRpcBroadcastMs": 1624.49,
-    "minedInBlocks": ["31271330", "31271331"]
-  }
-}
-```
+* **JSON Report (`report-<timestamp>.json`):** Ideal for CI/CD integration, automated tracking, and programmatic ingestion.
+* **HTML Dashboard (`report-<timestamp>.html`):** Standalone, browser-ready interactive dashboard featuring execution summary cards and latency visualization.
 
 ---
 
 ## 📂 Repository Structure Overview
-* `src/index.ts` - Core orchestration pipeline (network diagnostics, latency tracking, parallel worker engine, report exporter).
-* `reports/` - Output directory containing generated JSON benchmark reports.
-* `package.json` - Project metadata and execution scripts.
-* `tsconfig.json` - Strict TypeScript compiler settings.
+* `src/index.ts` — Main CLI entrypoint, interactive profile engine, wallet pre-checks, rate-limit backoff handler, and transaction broadcaster.
+* `src/contractData.ts` — EVM Benchmark Contract bytecodes and ABI definitions (`Counter`).
+* `src/htmlReport.ts` — HTML Dashboard template builder.
+* `reports/` — Output directory for JSON logs and HTML visual reports.
+* `package.json` — Dependency management and execution scripts.
+* `tsconfig.json` — Strict TypeScript compilation rules.
 
 ---
 
 ## 🚀 Future Roadmap & Mainnet Alignment
-1. **Phase 1 (July 31):** Complete open-source CLI framework MVP for GASOK submission.
-2. **Phase 2 (August):** Integrate real-time WebSocket listeners for native GIWA Flashblocks stream pre-confirmations.
-3. **Phase 3 (September Mainnet):** Provide turnkey Docker-ready configurations for node operators running `giwa-io/node` to measure local node throughput post-genesis.
+1. **Phase 1 (July 31):** Complete open-source CLI benchmark framework for GASOK submission.
+2. **Phase 2 (August):** Integrate WebSocket subscriptions for sub-second GIWA Flashblock pre-confirmation timing.
+3. **Phase 3 (September Mainnet):** Provide Docker-ready orchestration for node operators running `giwa-io/node` to measure local throughput.
 
 ---
 

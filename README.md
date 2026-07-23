@@ -45,23 +45,30 @@ An open-source, high-performance Node.js benchmarking framework designed to stre
 ### 1. Installation
 Clone the repository and install dependencies:
 
+```bash
 git clone https://github.com/your-username/giwa-stressforge.git
 cd giwa-stressforge
 npm install
+```
 
 ### 2. Environment Setup
 Create a `.env` file in the root directory:
 
+```env
 RPC_URL=https://sepolia-rpc.giwa.io
 PRIVATE_KEY=0x_your_private_key_here
+```
 
 ### 3. Execution
 Launch the interactive CLI benchmark tool:
 
+```bash
 npm run dev
+```
 
 Upon launching, the interactive menu will display your current balance and prompt for a profile selection:
 
+```text
 ============================================================
 💳 Wallet Balance : 0.0520 ETH
 ============================================================
@@ -73,6 +80,7 @@ Upon launching, the interactive menu will display your current balance and promp
 ------------------------------------------------------------
 
 Enter choice (1-4) [default: 1]:
+```
 
 ---
 

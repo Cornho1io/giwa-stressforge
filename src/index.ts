@@ -5,11 +5,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
 
-// Модули проекта
 import { COUNTER_ABI, COUNTER_BYTECODE } from './contractData';
 import { generateHtmlReport } from './htmlReport';
 
-// RPC & Auth Setup
 const RPC_URL = process.env.RPC_URL || 'https://sepolia-rpc.giwa.io';
 const PRIVATE_KEY = process.env.PRIVATE_KEY as `0x${string}`;
 
@@ -36,16 +34,31 @@ interface ExecutionConfig {
   maxPriorityFeeGwei: number;
 }
 
-interface TxResult {
-  success: boolean;
-  hash?: `0x${string}`;
-  duration: number;
-  blockNumber: number;
-  error?: string;
+interface BenchmarkMetrics {
+  profile: string;
+  totalTxCount: number;
+  successfulTxs: number;
+  failedTxs: number;
+  evmTxsCount: number;
+  nativeTxsCount: number;
+  durationMs: number;
+  avgLatencyMs: number;
+  minLatencyMs: number;
+  maxLatencyMs: number;
+  blocksCovered: string[];
+  primaryFailureReason: string;
+  readSpamTotal: number;
+  readSpamSuccess: number;
+  readSpamFailed: number;
+  rateLimitsCaught: number;
+  retriesExecuted: number;
+  txLatencies: number[];
+  contractAddress: string | null;
+  finalCounterValue: string | null;
 }
 
 /**
- * Interactive Profile Selector with Balance Awareness
+ * Интерактивное меню с выбором профиля
  */
 async function getExecutionConfig(currentBalanceEth: string): Promise<ExecutionConfig> {
   const rl = readline.createInterface({
@@ -137,11 +150,11 @@ async function main() {
   const publicClient = createPublicClient({ chain: giwaChain, transport: http(RPC_URL) });
   const walletClient = createWalletClient({ account, chain: giwaChain, transport: http(RPC_URL) });
 
-  // 1. Сначала запрашиваем баланс
+  // 1. Проверка баланса
   const balance = await publicClient.getBalance({ address: account.address });
   const formattedBalance = formatEther(balance);
 
-  // 2. Передаем баланс в меню выбора
+  // 2. Вызов интерактивного меню
   const config = await getExecutionConfig(formattedBalance);
 
   console.log(`\n🚀 Starting StressForge Benchmark...`);
@@ -151,24 +164,55 @@ async function main() {
   console.log(`• Batch Size   : ${config.txCount} txs\n`);
 
   const estimatedRequiredETH = config.txCount * 0.00008;
-  const isLowBalance = Number(formattedBalance) < estimatedRequiredETH;
-
-  if (isLowBalance) {
+  if (Number(formattedBalance) < estimatedRequiredETH) {
     console.warn(`⚠️  WARNING: Low ETH balance (${formattedBalance} ETH).`);
-    console.warn(`💡 Required approx ~${estimatedRequiredETH.toFixed(4)} ETH for profile ${config.profileName}.`);
-    console.warn(`👉 Please top up target account via GIWA Sepolia Faucet if transactions fail.\n`);
+    console.warn(`💡 Required approx ~${estimatedRequiredETH.toFixed(4)} ETH for profile ${config.profileName}.\n`);
   }
+
+  const metrics: BenchmarkMetrics = {
+    profile: config.profileName,
+    totalTxCount: config.txCount,
+    successfulTxs: 0,
+    failedTxs: 0,
+    evmTxsCount: 0,
+    nativeTxsCount: 0,
+    durationMs: 0,
+    avgLatencyMs: 0,
+    minLatencyMs: 0,
+    maxLatencyMs: 0,
+    blocksCovered: [],
+    primaryFailureReason: 'None',
+    readSpamTotal: 0,
+    readSpamSuccess: 0,
+    readSpamFailed: 0,
+    rateLimitsCaught: 0,
+    retriesExecuted: 0,
+    txLatencies: [],
+    contractAddress: null,
+    finalCounterValue: null,
+  };
 
   const startTotalTime = Date.now();
 
-  const feeData = await publicClient.estimateFeesPerGas().catch(() => null);
-  const baseMaxFee = feeData?.maxFeePerGas || parseGwei('2');
-
+  // 3. Запуск фонового Read Spam
+  let stopReadSpam = false;
   if (config.enableReadSpam) {
     console.log(`⚡ Launching parallel READ-heavy RPC queries...`);
-    Promise.all(Array.from({ length: 10 }).map(() => publicClient.getBalance({ address: account.address }))).catch(() => {});
+    (async () => {
+      while (!stopReadSpam) {
+        metrics.readSpamTotal++;
+        try {
+          await publicClient.getBalance({ address: account.address });
+          metrics.readSpamSuccess++;
+        } catch {
+          metrics.readSpamFailed++;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 80));
+      }
+    })();
   }
 
+  // 4. Деплой смарт-контракта
   let deployedContractAddress: `0x${string}` | null = null;
   if (config.enableEVM) {
     console.log(`🛠️ Deploying EVM Benchmark Contract...`);
@@ -186,40 +230,40 @@ async function main() {
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash: deployHash, timeout: 25_000 });
       deployedContractAddress = receipt.contractAddress || null;
+      metrics.contractAddress = deployedContractAddress;
       console.log(`✅ EVM Contract Deployed at: ${deployedContractAddress}`);
     } catch (e: any) {
-      const errReason = isLowBalance ? 'Insufficient ETH balance for deployment fee' : parseShortError(e);
-      console.warn(`⚠️ Contract deployment skipped (${errReason}), falling back to self-transfers.`);
+      const errReason = parseShortError(e);
+      console.warn(`⚠️ Contract deployment skipped (${errReason}), falling back to native transfers.`);
     }
   }
 
-  const pendingNonce = await publicClient.getTransactionCount({
-    address: account.address,
-    blockTag: 'pending',
-  });
-  const latestNonce = await publicClient.getTransactionCount({
-    address: account.address,
-    blockTag: 'latest',
-  });
+  const feeData = await publicClient.estimateFeesPerGas().catch(() => null);
+  const baseMaxFee = feeData?.maxFeePerGas || parseGwei('2');
+
+  const pendingNonce = await publicClient.getTransactionCount({ address: account.address, blockTag: 'pending' });
+  const latestNonce = await publicClient.getTransactionCount({ address: account.address, blockTag: 'latest' });
   let baseNonce = Math.max(pendingNonce, latestNonce);
 
   console.log(`📦 Broadcasting batch of ${config.txCount} transactions starting from Nonce #${baseNonce}...`);
-  const txPromises: Promise<TxResult>[] = [];
+
+  const txPromises = [];
 
   for (let i = 0; i < config.txCount; i++) {
     const txNonce = baseNonce + i;
-
     const randomGwei = config.minPriorityFeeGwei + Math.random() * (config.maxPriorityFeeGwei - config.minPriorityFeeGwei);
     const initialPriorityFee = parseGwei(randomGwei.toFixed(3));
     const initialMaxFee = baseMaxFee + initialPriorityFee;
 
-    if (i > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 80));
-    }
+    if (i > 0) await new Promise((resolve) => setTimeout(resolve, 80));
 
-    const sendTx = async (attempt = 1): Promise<TxResult> => {
+    const sendTx = async (attempt = 1): Promise<{ success: boolean; duration: number; blockNumber: number; error?: string }> => {
       const txStart = Date.now();
       let hash: `0x${string}`;
+
+      if (attempt > 1) {
+        metrics.retriesExecuted++;
+      }
 
       const multiplier = Math.pow(1.35, attempt - 1);
       const priorityFee = parseGwei((Number(initialPriorityFee) / 1e9 * multiplier).toFixed(4));
@@ -227,6 +271,7 @@ async function main() {
 
       try {
         if (deployedContractAddress && i % 2 === 0) {
+          metrics.evmTxsCount++;
           hash = await walletClient.writeContract({
             address: deployedContractAddress,
             abi: COUNTER_ABI,
@@ -237,6 +282,7 @@ async function main() {
             gas: 100_000n,
           });
         } else {
+          metrics.nativeTxsCount++;
           hash = await walletClient.sendTransaction({
             to: account.address,
             value: 0n,
@@ -247,49 +293,25 @@ async function main() {
           });
         }
 
-        const receipt = await publicClient.waitForTransactionReceipt({
-          hash,
-          timeout: 20_000,
-        });
-
-        return {
-          success: true,
-          hash,
-          duration: Date.now() - txStart,
-          blockNumber: Number(receipt.blockNumber),
-        };
+        const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 20_000 });
+        return { success: true, duration: Date.now() - txStart, blockNumber: Number(receipt.blockNumber) };
       } catch (err: any) {
         const shortErr = parseShortError(err);
 
-        if ((shortErr.includes('rate limit') || shortErr.includes('429')) && attempt <= 5) {
-          const backoff = 1000 * attempt + Math.floor(Math.random() * 500);
-          await new Promise((resolve) => setTimeout(resolve, backoff));
-          return sendTx(attempt + 1);
+        if (shortErr.includes('rate limit') || shortErr.includes('429')) {
+          metrics.rateLimitsCaught++;
+          if (attempt <= 5) {
+            const backoff = 1000 * attempt + Math.floor(Math.random() * 500);
+            await new Promise((res) => setTimeout(res, backoff));
+            return sendTx(attempt + 1);
+          }
         }
 
         if ((shortErr.includes('underpriced') || shortErr.includes('replacement')) && attempt <= 4) {
           return sendTx(attempt + 1);
         }
 
-        if (shortErr.includes('nonce too low') || shortErr.includes('lower than the current nonce')) {
-          return {
-            success: true,
-            hash: '0x0000000000000000000000000000000000000000000000000000000000000000',
-            duration: Date.now() - txStart,
-            blockNumber: 0,
-          };
-        }
-
-        const finalErrorMsg = (shortErr.includes('Missing or invalid parameters') && isLowBalance)
-          ? 'Insufficient ETH balance for gas fees'
-          : shortErr;
-
-        return {
-          success: false,
-          duration: Date.now() - txStart,
-          blockNumber: 0,
-          error: finalErrorMsg,
-        };
+        return { success: false, duration: Date.now() - txStart, blockNumber: 0, error: shortErr };
       }
     };
 
@@ -297,57 +319,86 @@ async function main() {
   }
 
   const results = await Promise.all(txPromises);
-  const totalDurationMs = Date.now() - startTotalTime;
+  stopReadSpam = true;
 
+  metrics.durationMs = Date.now() - startTotalTime;
   const successful = results.filter((r) => r.success);
-  const failedCount = results.length - successful.length;
+  metrics.successfulTxs = successful.length;
+  metrics.failedTxs = results.length - successful.length;
 
   const latencies = successful.map((s) => s.duration);
-  const avgLatency = latencies.reduce((a, b) => a + b, 0) / (latencies.length || 1);
-  const minLatency = latencies.length ? Math.min(...latencies) : 0;
-  const maxLatency = latencies.length ? Math.max(...latencies) : 0;
-  const blocksCovered = Array.from(new Set(successful.map((s) => s.blockNumber))).filter((b) => b > 0);
+  metrics.txLatencies = latencies;
 
-  console.log('\n============================================================');
-  console.log(`📊 STRESSFORGE EXECUTION SUMMARY [Profile: ${config.profileName}]`);
-  console.log('============================================================');
-  console.log(`• Total Execution Time : ${totalDurationMs.toFixed(2)} ms`);
-  console.log(`• Success Rate         : ${successful.length}/${config.txCount} Txs Mined (${failedCount} failed)`);
-  console.log(`• Avg Latency          : ${avgLatency.toFixed(2)} ms (Min: ${minLatency}ms / Max: ${maxLatency}ms)`);
-  console.log(`• Blocks Covered       : #${blocksCovered.length > 0 ? blocksCovered.join(', #') : 'N/A'}`);
-  if (failedCount > 0) {
-    const sampleError = results.find((r) => !r.success)?.error;
-    console.log(`• Primary Failure Cause: ${sampleError}`);
+  if (latencies.length > 0) {
+    metrics.avgLatencyMs = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+    metrics.minLatencyMs = Math.min(...latencies);
+    metrics.maxLatencyMs = Math.max(...latencies);
   }
-  console.log('------------------------------------------------------------');
 
+  const blocksSet = new Set(successful.map((s) => `#${s.blockNumber}`).filter((b) => b !== '#0'));
+  metrics.blocksCovered = Array.from(blocksSet);
+
+  if (metrics.failedTxs > 0) {
+    metrics.primaryFailureReason = results.find((r) => !r.success)?.error || 'RPC Limit / Socket Drop';
+  }
+
+  // 5. Чтение итогового состояния смарт-контракта (если был задеплоен)
+  if (deployedContractAddress) {
+    try {
+      const countVal = await publicClient.readContract({
+        address: deployedContractAddress,
+        abi: COUNTER_ABI,
+        functionName: 'count',
+      });
+      metrics.finalCounterValue = countVal.toString();
+    } catch {
+      metrics.finalCounterValue = 'Error Reading State';
+    }
+  }
+
+  // 6. Вывод итогов
+  console.log('\n============================================================');
+  console.log(`📊 STRESSFORGE EXECUTION SUMMARY [Profile: ${metrics.profile}]`);
+  console.log('============================================================');
+  console.log(`• Total Execution Time : ${metrics.durationMs.toFixed(2)} ms`);
+  console.log(`• Success Rate         : ${metrics.successfulTxs}/${metrics.totalTxCount} Txs Mined (${metrics.failedTxs} failed)`);
+  console.log(`• Avg Tx Latency       : ${metrics.avgLatencyMs.toFixed(2)} ms (Min: ${metrics.minLatencyMs}ms / Max: ${metrics.maxLatencyMs}ms)`);
+  console.log(`• Blocks Covered       : ${metrics.blocksCovered.join(', ') || 'N/A'}`);
+
+  console.log('\n📦 TRANSACTION TYPES BREAKDOWN');
+  console.log(`• EVM Contract Calls   : ${metrics.evmTxsCount} attempted`);
+  console.log(`• Native Self-Transfers: ${metrics.nativeTxsCount} attempted`);
+
+  if (metrics.contractAddress) {
+    console.log(`\n🛠️ EVM CONTRACT METRICS`);
+    console.log(`• Contract Address     : ${metrics.contractAddress}`);
+    console.log(`• Final Counter State  : ${metrics.finalCounterValue} increments`);
+  }
+
+  if (config.enableReadSpam) {
+    console.log('\n🛡️ RESILIENCE & RPC STRESS METRICS');
+    console.log(`• Parallel Read Spam   : ${metrics.readSpamSuccess}/${metrics.readSpamTotal} Passed (${metrics.readSpamFailed} throttled)`);
+    console.log(`• Rate Limits (429)    : Caught ${metrics.rateLimitsCaught} times`);
+    console.log(`• Backoff Retries      : ${metrics.retriesExecuted} attempts executed`);
+  }
+
+  if (metrics.failedTxs > 0) {
+    console.log(`\n• Primary Failure Cause: ${metrics.primaryFailureReason}`);
+  }
+  console.log('============================================================\n');
+
+  // 7. Экспорт JSON и HTML
   const reportsDir = path.join(process.cwd(), 'reports');
   if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const jsonPath = path.join(reportsDir, `report-${timestamp}.json`);
-  const htmlPath = path.join(reportsDir, `report-${timestamp}.html`);
+  fs.writeFileSync(path.join(reportsDir, `report-${timestamp}.json`), JSON.stringify(metrics, null, 2));
 
-  const reportData = {
-    timestamp: new Date().toLocaleString(),
-    profile: config.profileName,
-    totalDurationMs,
-    totalTxsSent: config.txCount,
-    successfulTxs: successful.length,
-    failedTxs: failedCount,
-    avgLatencyMs: avgLatency,
-    minLatencyMs: minLatency,
-    maxLatencyMs: maxLatency,
-    blocksCovered,
-    latencies,
-  };
-
-  fs.writeFileSync(jsonPath, JSON.stringify(reportData, null, 2));
-  generateHtmlReport(reportData, htmlPath);
+  const htmlContent = generateHtmlReport(metrics);
+  fs.writeFileSync(path.join(reportsDir, `report-${timestamp}.html`), htmlContent);
 
   console.log(`📂 Saved JSON Report : ./reports/report-${timestamp}.json`);
-  console.log(`📂 Saved HTML Report : ./reports/report-${timestamp}.html`);
-  console.log('============================================================\n');
+  console.log(`📂 Saved HTML Report : ./reports/report-${timestamp}.html\n`);
 }
 
 main().catch((err) => {

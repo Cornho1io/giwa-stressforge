@@ -93,6 +93,19 @@ Reports are automatically generated and saved in the `./reports/` directory upon
 
 ---
 
+## 📊 Sample Benchmark Findings & RPC Diagnostics
+
+During high-concurrency testing (`MAX` profile with 50 parallel transactions & read-spam queries), **StressForge** successfully isolated latency degradation and rate-limiting thresholds on the target network:
+
+![GIWA StressForge Report Preview](https://github.com/user-attachments/assets/27150a61-d900-4b07-90bc-f66b21031b18)
+
+### 📈 Key Diagnostics
+* **RPC Throttling Detected:** Identified strict rate-limiting boundaries (HTTP 429) during sustained parallel Read queries.
+* **Confirmation Degradation:** Under heavy stress, transaction confirmation latency scaled from ~600ms up to 10.3s.
+* **Network Resilience:** The built-in backoff mechanism automatically caught rate limits and recovered execution without unhandled process drops.
+
+---
+
 ## 📂 Repository Structure Overview
 * `src/index.ts` — Main CLI entrypoint, interactive profile engine, wallet pre-checks, rate-limit backoff handler, and transaction broadcaster.
 * `src/contractData.ts` — EVM Benchmark Contract bytecodes and ABI definitions (`Counter`).
